@@ -4,7 +4,7 @@ A through-hole, discrete-logic **4-bit ripple-carry adder** built from 74HC86 (X
 
 ![KiCad](https://img.shields.io/badge/Designed%20with-KiCad-blue)
 ![Logic](https://img.shields.io/badge/Logic-74HC%20Series-green)
-![Status](https://img.shields.io/badge/Status-Design%20complete%2C%20hardware%20not%20verified-orange)
+![Status](https://img.shields.io/badge/Status-Design%20complete%2C%20hardware%20verified-orange)
 
 > **Project status (please read):** The schematic and PCB layout exist in KiCad. This README makes **no claim** that the board has been fabricated, assembled or tested. All results below are *theoretical expected values*. Items marked **⚠ Confirm** need to be checked by the author before fabrication.
 
