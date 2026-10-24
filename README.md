@@ -4,9 +4,23 @@ A through-hole, discrete-logic **4-bit ripple-carry adder** built from 74HC86 (X
 
 ![KiCad](https://img.shields.io/badge/Designed%20with-KiCad-blue)
 ![Logic](https://img.shields.io/badge/Logic-74HC%20Series-green)
-![Status](https://img.shields.io/badge/Status-Design%20complete%2C%20hardware%20is%20verified-orange)
+![Status](https://img.shields.io/badge/Status-Design%20complete%2C%20hardware%20not%20verified-orange)
 
-> **Project status (please read):** The schematic and PCB layout exist in KiCad. This README makes **no claim** that the board has been fabricated, assembled or tested. All results below are *theoretical expected values*. Items marked **⚠ Confirm** need to be checked by the author before fabrication.
+> **Project status:** The schematic and final PCB layout are complete in KiCad. This README makes **no claim** that the board has been fabricated, assembled or tested. All results below are *theoretical expected values*. Items marked **⚠ Confirm** should be checked before fabrication.
+
+## At a Glance
+
+| Parameter | Specification |
+|---|---|
+| Function | Adds two 4-bit unsigned binary numbers |
+| Inputs | 8 push switches: A0–A3 and B0–B3 |
+| Output | 5-bit result `Cout S3 S2 S1 S0` (range 0 to 30) on 5 LEDs |
+| Architecture | Half adder (bit 0) + three full adders (bits 1–3), ripple-carry |
+| Logic ICs | 2× 74HC86 (XOR), 2× 74HC08 (AND), 1× 74HC32 (OR) |
+| Supply | Regulated 5 V DC via barrel jack, fuse and power switch |
+| PCB | KiCad, through-hole, appears to be 2-layer |
+| Hardware status | Fabrication and testing **not yet verified** |
+
 
 ---
 
@@ -60,6 +74,7 @@ The board also has eight **input-indicator LEDs** (D1–D8) that mirror the stat
 - Two 4-bit inputs, 5-bit output (sum + carry).
 - Input-state LEDs for each switch, so the entered operands can be read directly from the board.
 - 10 kΩ pull-down resistors for defined logic-low inputs.
+- Five 100 nF decoupling capacitors (C1–C5), one beside each IC.
 - 220 Ω series resistors on every LED.
 - Power entry through a barrel jack with a fuse and an on/off switch.
 - Through-hole, breadboard-style parts, easy to hand-solder and probe.
@@ -137,44 +152,193 @@ Gate truth tables:
 
 ## 7. Circuit Architecture and Block Diagram
 
+### 7.1 System-level block diagram
+
+The design is split into four functional blocks: **power**, **input stage**, **logic core** and **output stage**.
+
 ```mermaid
 flowchart LR
-    subgraph IN["Inputs (push switches)"]
-        A["A3..A0 (SW2, SW4, SW6, SW8)"]
-        B["B3..B0 (SW3, SW5, SW7, SW9)"]
+    PWR["POWER<br/>J1 - F1 - SW1<br/>regulated +5 V"]
+
+    subgraph INP["INPUT STAGE"]
+        direction TB
+        SWA["SW2, SW4, SW6, SW8<br/>Operand A (A0-A3)"]
+        SWB["SW3, SW5, SW7, SW9<br/>Operand B (B0-B3)"]
+        IND["10 kOhm pull-downs<br/>Indicator LEDs D1-D8"]
     end
 
-    A --> HA0
-    B --> HA0
-    A --> FA1
-    B --> FA1
-    A --> FA2
-    B --> FA2
-    A --> FA3
-    B --> FA3
+    subgraph CORE["LOGIC CORE - 74HC ICs"]
+        direction TB
+        XORS["XOR: U1, U2<br/>74HC86"]
+        ANDS["AND: U3, U4<br/>74HC08"]
+        ORS["OR: U5<br/>74HC32"]
+    end
 
-    HA0["Bit 0<br/>Half adder<br/>XOR + AND"]
-    FA1["Bit 1<br/>Full adder<br/>2 XOR, 2 AND, 1 OR"]
-    FA2["Bit 2<br/>Full adder<br/>2 XOR, 2 AND, 1 OR"]
-    FA3["Bit 3<br/>Full adder<br/>2 XOR, 2 AND, 1 OR"]
+    subgraph OUT["OUTPUT STAGE"]
+        direction TB
+        RES["220 Ohm resistors<br/>R17-R21"]
+        LEDS["LEDs D13-D9<br/>Cout S3 S2 S1 S0"]
+    end
+
+    PWR -- "INPUT_VCC" --> INP
+    PWR -- "VCC + C1-C5" --> CORE
+    INP -- "A0-A3, B0-B3" --> CORE
+    CORE -- "S0-S3, Cout" --> OUT
+```
+
+### 7.2 Functional blocks
+
+| Block | Reference designators | Function | Key signals |
+|---|---|---|---|
+| **Power** | J1, F1, SW1, C1–C5 | Accepts regulated 5 V DC, protects with a fuse, switches the supply, decouples each IC | `INPUT_VCC`, `GND` |
+| **Input stage** | SW2–SW9, R2/R3/R5/R7/R9/R11/R13/R15, D1–D8, R1/R4/R6/R8/R10/R12/R14/R16 | Converts switch positions into clean logic levels and shows each level on an LED | A0–A3, B0–B3 |
+| **XOR section** | U1, U2 (74HC86) | Computes propagate signals $P_i$ and sum bits $S_i$ | $P_i$, $S_i$ |
+| **AND section** | U3, U4 (74HC08) | Computes generate signals $G_i$ and carry-propagate terms $P_i C_i$ | $G_i$, $P_i C_i$ |
+| **OR section** | U5 (74HC32) | Combines $G_i$ and $P_i C_i$ into the next carry | $C_{i+1}$ |
+| **Output stage** | R17–R21, D9–D13 | Displays S0–S3 and Cout | `Cout S3 S2 S1 S0` |
+
+### 7.3 Bit-slice architecture
+
+The adder is built from four identical bit slices. Bit 0 has no carry-in, so it needs only a **half adder**. Bits 1 to 3 each use a **full adder** made from two XOR gates, two AND gates and one OR gate.
+
+**Full-adder slice (bits 1–3):**
+
+```mermaid
+flowchart LR
+    Ai["Ai"] --> X1["XOR 1"]
+    Bi["Bi"] --> X1
+    Ai --> A1["AND 1"]
+    Bi --> A1
+
+    X1 -- "Pi" --> X2["XOR 2"]
+    Ci["Ci (carry-in)"] --> X2
+    X1 -- "Pi" --> A2["AND 2"]
+    Ci --> A2
+
+    X2 --> Si["Si (sum)"]
+    A1 -- "Gi" --> O1["OR"]
+    A2 -- "Pi AND Ci" --> O1
+    O1 --> Co["C(i+1) (carry-out)"]
+```
+
+**Half-adder slice (bit 0):**
+
+```mermaid
+flowchart LR
+    A0["A0"] --> XH["XOR"]
+    B0["B0"] --> XH
+    A0 --> AH["AND"]
+    B0 --> AH
+    XH --> S0["S0 (sum)"]
+    AH --> C1["C1 (carry-out)"]
+```
+
+### 7.4 Gate allocation per stage
+
+| Stage | Type | XOR | AND | OR | Outputs |
+|---|---|:-:|:-:|:-:|---|
+| Bit 0 | Half adder | 1 | 1 | 0 | S0, C1 |
+| Bit 1 | Full adder | 2 | 2 | 1 | S1, C2 |
+| Bit 2 | Full adder | 2 | 2 | 1 | S2, C3 |
+| Bit 3 | Full adder | 2 | 2 | 1 | S3, C4 = Cout |
+| **Required** | | **7** | **7** | **3** | |
+| **Available** (2× 74HC86, 2× 74HC08, 1× 74HC32) | | 8 | 8 | 4 | |
+| **Spare** | | 1 | 1 | 1 | Unused inputs must be tied to a defined level |
+
+The exact gate-to-pin assignment is defined in the KiCad schematic and is not repeated here.
+
+### 7.5 Ripple-carry chain
+
+The carry-out of each slice drives the carry-in of the next one. The fifth result bit, Cout, is the carry-out of bit 3.
+
+```mermaid
+flowchart LR
+    IN0["A0, B0"] --> HA0["Bit 0<br/>Half adder"]
+    IN1["A1, B1"] --> FA1["Bit 1<br/>Full adder"]
+    IN2["A2, B2"] --> FA2["Bit 2<br/>Full adder"]
+    IN3["A3, B3"] --> FA3["Bit 3<br/>Full adder"]
 
     HA0 -- "C1" --> FA1
     FA1 -- "C2" --> FA2
     FA2 -- "C3" --> FA3
 
-    HA0 --> S0["S0 → LED"]
-    FA1 --> S1["S1 → LED"]
-    FA2 --> S2["S2 → LED"]
-    FA3 --> S3["S3 → LED"]
-    FA3 -- "C4" --> COUT["Cout → LED"]
+    HA0 --> S0["S0"]
+    FA1 --> S1["S1"]
+    FA2 --> S2["S2"]
+    FA3 --> S3["S3"]
+    FA3 -- "C4" --> COUT["Cout"]
 ```
 
-**Schematic organisation (as drawn in KiCad):**
+### 7.6 Signal timing (derived from topology)
 
-- **IC sections:** XOR (74HC86 ×2), AND (74HC08 ×2) and OR (74HC32 ×1), each with its truth table.
-- **Input section:** four input blocks, each with two switches, two 10 kΩ pull-downs and two LED indicators.
-- **Output section:** five LED outputs, each with a 220 Ω resistor.
-- **Input power supply:** barrel jack → fuse → power switch → `INPUT_VCC`.
+Counting the number of gates a signal passes through gives the **logic depth**. Assuming all inputs change at the same instant:
+
+| Signal | Path | Depth (gate delays) |
+|---|---|:-:|
+| S0, C1 | XOR or AND of A0, B0 | 1 |
+| S1 | XOR(P1, C1) | 2 |
+| C2 | AND(P1, C1) → OR with G1 | 3 |
+| S2 | XOR(P2, C2) | 4 |
+| C3 | AND(P2, C2) → OR with G2 | 5 |
+| S3 | XOR(P3, C3) | 6 |
+| **Cout (C4)** | AND(P3, C3) → OR with G3 | **7** |
+
+Each ripple stage adds two gate delays (one AND plus one OR) to the carry path, so the worst case is `1111 + 0001`. These depths come from the circuit structure, **not from measurement**; actual propagation delay depends on the 74HC datasheet values, supply voltage and load.
+
+### 7.7 Input and output channel structure
+
+Each of the eight inputs and five outputs uses the same circuit pattern.
+
+```mermaid
+flowchart LR
+    subgraph IC["Input channel (x8)"]
+        direction LR
+        VCC1["INPUT_VCC"] --> SW["Push switch"]
+        SW --> NODE(("Logic node"))
+        NODE --> PD["10 kOhm to GND"]
+        NODE --> RL["220 Ohm"] --> LD["LED to GND"]
+        NODE --> GI["Gate input"]
+    end
+
+    subgraph OC["Output channel (x5)"]
+        direction LR
+        GO["Gate output"] --> RO["220 Ohm"] --> LO["LED to GND"]
+    end
+```
+
+| Channel | Idle state | Active state | Notes |
+|---|---|---|---|
+| Input | Pulled to GND by 10 kΩ (logic 0), LED off | Switch connects node to `INPUT_VCC` (logic 1), LED on | Switch type (latching or momentary) to be confirmed |
+| Output | Gate output low, LED off | Gate output high, LED on (active-high) | LED current set by the 220 Ω series resistor |
+
+### 7.8 Power distribution
+
+```mermaid
+flowchart LR
+    ADP["Regulated 5 V adapter"] --> J1["J1<br/>barrel jack"]
+    J1 --> F1["F1<br/>fuse"]
+    F1 --> SW1["SW1<br/>power switch"]
+    SW1 --> RAIL["INPUT_VCC rail"]
+
+    RAIL --> ICS["U1-U5<br/>pin 14 (VCC)"]
+    RAIL --> SWS["Input switches<br/>SW2-SW9"]
+    CAPS["C1-C5<br/>100 nF"] -. "decoupling" .-> ICS
+    GND["GND plane/net"] --- ICS
+    GND --- CAPS
+```
+
+The same `INPUT_VCC` rail powers the ICs and provides the logic-high level for the input switches. There is no on-board regulator, so the adapter must supply a regulated 5 V (see [Section 12](#12-power-supply-requirements-and-safety-precautions)).
+
+### 7.9 Physical placement versus logical function
+
+| PCB area | Contents | Logical role |
+|---|---|---|
+| Top row, left to right | U1 (XOR-1), U3 (AND-1), U5 (OR), U4 (AND-2), U2 (XOR-2), with C1–C5 between them | Logic core |
+| Middle left (two rows of four) | SW2, SW4, SW6, SW8 / SW3, SW5, SW7, SW9 | Operand entry |
+| Middle right (framed array) | D1–D8 | Input-state indicators |
+| Bottom of LED frame | D13 D12 D11 D10 D9 | Output: Cout S3 S2 S1 S0 (left to right) |
+| Bottom left | J1, F1, SW1 | Power entry |
+| Bottom centre | 10 kΩ bank (R2, R3, R5, R7, R9, R11, R13, R15) and 220 Ω bank (R1, R4, R6, R8, R10, R12, R14, R16–R21) | Pull-downs and LED current limiting |
 
 ## 8. Hardware Components
 
@@ -195,11 +359,12 @@ Quantities are taken from the KiCad schematic and PCB silkscreen.
 | F1 | Small fuse | 1 | Overcurrent protection (**⚠ Confirm rating**) |
 | SW1 | Slide power switch | 1 | Supply on/off |
 | H1, H2 | Mounting holes | 2 | Mechanical mounting (**⚠ Confirm size**) |
-| *C (proposed)* | 100 nF ceramic decoupling capacitor | 5 | **Not in the current design.** See [Section 12](#12-power-supply-requirements-and-safety-precautions) |
+| C1–C5 | 100 nF ceramic decoupling capacitor | 5 | Local supply decoupling, one beside each IC |
+| *C (optional)* | 10–100 µF electrolytic bulk capacitor | 1 | **Not in the current design.** Recommended near J1 (hand-fit or add in a future revision) |
 
 Optional: DIP-14 IC sockets (recommended for easy IC replacement).
 
-Total: 5 ICs, 8 switches, 13 LEDs, 8× 10 kΩ and 13× 220 Ω resistors.
+Total: 5 ICs, 8 switches, 13 LEDs, 8× 10 kΩ resistors, 13× 220 Ω resistors and 5× 100 nF capacitors.
 
 ## 9. Input and Output Explanation
 
@@ -285,7 +450,7 @@ Recommended practice: test all 256 input combinations if possible (for example w
 ### Supply
 
 - The design requires a **regulated 5 V DC supply**. The 74HC family is specified for a limited supply range (typically about 2 V to 6 V; **verify against the datasheet of the exact parts**), and it is **not** safe to feed unregulated or higher voltages.
-- **⚠ Confirm:** The schematic title for the power block reads "12 – 5 DC", and the board has only a barrel jack, fuse and switch, with **no voltage regulator**. Use a regulated 5 V adapter or add an on-board regulator (for example a 5 V linear regulator with input/output capacitors). Never connect a 12 V adapter to J1 as the design stands.
+- The schematic power block is labelled for **5 V DC**. The board has only a barrel jack, fuse and switch and **no voltage regulator**, so use a regulated 5 V adapter. Never connect a 12 V (or any unregulated) adapter to J1.
 - **⚠ Confirm** the barrel-jack polarity and plug size of your adapter against the J1 footprint (centre-positive is typical).
 
 ### Estimated current (calculation, not a measurement)
@@ -298,7 +463,7 @@ Worst case with all 13 LEDs lit is about 177 mA, plus a small amount through the
 
 ### Pre-fabrication checks (important)
 
-1. **Decoupling capacitors.** None appear in the current schematic. Add a 100 nF ceramic capacitor close to the VCC/GND pins of every IC, plus a bulk capacitor (for example 10–100 µF) near the power entry. **Verify before fabrication.**
+1. **Decoupling capacitors.** C1–C5 (100 nF) are placed beside the ICs in the final layout. **Verify** on the PCB that each sits close to its IC's VCC (pin 14) and GND (pin 7), and consider adding a 10–100 µF bulk capacitor near J1.
 2. **LED current and gate drive.** A 220 Ω resistor gives roughly 13 mA, which may exceed the DC output current that 74HC gates are specified to drive at guaranteed logic levels (a few mA at 5 V; check the datasheet). Output LEDs are driven directly by gate outputs, so **verify** the resistor values, and consider larger values (for example 470 Ω to 1 kΩ) or a buffer if brightness is acceptable.
 3. **Unused gate inputs.** One XOR, one AND and one OR gate are spare. Unused CMOS inputs must be tied to GND or VCC, never left floating. **Verify** this in the schematic (a floating input can cause extra current draw and noise).
 
@@ -321,6 +486,7 @@ Worst case with all 13 LEDs lit is about 177 mA, plus a small amount through the
 | Ground | Copper fill/zone visible on the back side (**⚠ Confirm** zone settings) |
 | Silkscreen | IC names (XOR-1, AND-1, OR, AND-2, XOR-2), switch and LED references, "10k Pull Down" and "220ohm for LEDs" resistor groups, BCD 0–15 reference table, KiCad logo |
 | Layout | ICs along the top, switches in two rows, LED array on the right, resistor banks and power entry along the bottom |
+| Decoupling | C1–C5 (100 nF) placed between/beside the ICs |
 | Mounting | Mounting holes H1 and H2 visible (**⚠ Confirm** count/size) |
 
 ### 13.2 Items intentionally not specified
@@ -345,17 +511,19 @@ The following are **not documented because they have not been provided**; add th
 
 ### 13.4 Items to confirm before fabrication
 
+Resolved in the final revision: reference designators now match between schematic and PCB (U1–U5), and decoupling capacitors C1–C5 were added.
+
 | # | Observation | Action |
-|---|---|---|
-| 1 | PCB silkscreen shows ICs as U2–U6, while the schematic shows U1–U5 | Re-annotate and update the PCB from the schematic so references match |
-| 2 | Output "MSB/LSB" annotations in the schematic appear reversed (see Section 9) | Correct annotations and verify net assignment |
-| 3 | No decoupling capacitors in the schematic | Add and place near each IC |
-| 4 | Power block titled "12 – 5 DC" but no regulator present | Clarify; use a regulated 5 V supply or add a regulator |
-| 5 | 220 Ω on gate-driven output LEDs | Verify against 74HC output current ratings |
-| 6 | Unused gate inputs | Tie to a defined level |
-| 7 | Silkscreen "BCD" table lists 0–15, but sums go up to 30 | Rename to "Binary/Decimal" or extend; BCD is a different encoding |
-| 8 | Switch type (latching vs momentary) | Confirm and document |
-| 9 | Run ERC and DRC and attach the reports | Add to `hardware/reports/` |
+|:-:|---|---|
+| 1 | Schematic labels `1OUT` as "Bit-1 (MSB)" and the last output as "Bit-5 (LSB)"; by the adder equations this looks reversed (see Section 9) | Correct the annotations and verify net assignment |
+| 2 | No bulk capacitor near the power entry | Optional: add 10–100 µF near J1 |
+| 3 | 5 V input with no regulator or reverse-polarity protection | Use a regulated 5 V adapter; consider adding protection |
+| 4 | 220 Ω on gate-driven output LEDs (about 13 mA estimated) | Verify against 74HC output current ratings; consider larger values |
+| 5 | Spare gates (one XOR, one AND, one OR) | Confirm unused inputs are tied to GND or VCC |
+| 6 | Silkscreen table titled "BCD" lists 0–15; sums go up to 30 | Consider renaming to "Binary / Decimal" |
+| 7 | Switch type (latching vs momentary) | Confirm and document |
+| 8 | ERC and DRC reports | Run both and add to `hardware/reports/` |
+| 9 | Board dimensions, mounting-hole size, KiCad version | Add once confirmed |
 
 ## 14. Repository Folder Structure
 
@@ -452,12 +620,12 @@ The following are **not documented because they have not been provided**; add th
 - Unsigned 4-bit operands only (no signed overflow indication).
 - Ripple-carry delay grows with each added bit; propagation delay has not been measured.
 - Eight manual switches make entering test patterns slow.
-- No on-board regulator and (currently) no decoupling capacitors.
+- No on-board regulator or reverse-polarity protection.
 - Hardware has not been fabricated or verified (as of this documentation).
 
 **Possible improvements**
 
-- Add decoupling and bulk capacitors, and a 5 V regulator stage with reverse-polarity protection.
+- Add a bulk capacitor and a 5 V regulator stage with reverse-polarity protection.
 - Replace switches with DIP switches or a microcontroller test header for automatic testing.
 - Add a carry-in input (turns the half adder at bit 0 into a full adder) and a subtract mode using XOR-controlled inversion of B.
 - Add a carry-lookahead version and compare delays.
